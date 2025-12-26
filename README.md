@@ -21,8 +21,10 @@ Copy-Item .env.example .env
 
 `.env` 파일에 다음 정보를 입력:
 - `GEMINI_API_KEY`: https://aistudio.google.com/app/apikey
-- `EMAIL_ADDRESS`: Gmail 주소
-- `EMAIL_PASSWORD`: Gmail 앱 비밀번호
+- `EMAIL_SENDER`: Gmail 발신자 주소
+- `EMAIL_PASSWORD`: Gmail 앱 비밀번호 (https://myaccount.google.com/apppasswords)
+- `EMAIL_RECIPIENTS`: 수신자 이메일 주소 (여러 명일 경우 쉼표로 구분)
+  - 예: `user1@example.com, user2@example.com`
 
 ### 3. RSS 피드 설정
 `rss_feeds.txt` 파일에 구독할 유튜브 채널 ID를 입력하세요.

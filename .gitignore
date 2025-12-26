@@ -17,3 +17,6 @@ ENV/
 .idea/
 *.swp
 *.swo
+
+# 데이터 파일
+processed_videos.json

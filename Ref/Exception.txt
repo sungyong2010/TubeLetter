@@ -1,0 +1,16 @@
+gemini-2.0-flash-exp 를 사용하면 
+429 한도초과 예외발생
+gemini-2.0-flash 를 사용하면 
+403 PERMISSION_DENIED 예외발생
+
+
+'gemini-2.0-flash-exp',
+'gemini-2.0-flash',
+
+요약 생성 실패: 403 PERMISSION_DENIED. 
+{'error': 
+    {
+        'code': 403, 
+        'message': 'Your API key was reported as leaked. Please use another API key.', 'status': 'PERMISSION_DENIED'
+    }
+}

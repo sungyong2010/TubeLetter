@@ -1,6 +1,6 @@
 import feedparser
 import time
-import google.generativeai as genai
+from google import genai  # 변경: google.generativeai → google.genai
 from youtube_transcript_api import YouTubeTranscriptApi
 import smtplib
 from email.mime.text import MIMEText
@@ -92,42 +92,41 @@ elif DEBUG:
         print(f"  {i}. {feed}")
     print()
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Gemini 클라이언트 생성 (새 API 방식)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Gemini 모델 설정 (사용 가능한 모델 자동 선택)
 def get_available_model():
     """사용 가능한 Gemini 모델 확인"""
     try:
-        models = [
-            'gemini-2.0-flash',           # 최신 고성능 모델
-            'gemini-2.0-flash-exp',       # 실험 모델
-            # 'gemini-exp-1121',            # 실험 모델 => Not found
-            # 'gemini-1.5-flash',           # 이전 모델 => Not found
-            # 'gemini-1.5-pro',             # Pro 모델 => Not found
-            # 'gemini-pro',                 # 기본 모델 => Not found
+        models = [            
+            'gemini-1.5-flash',      # ✅ 가장 안정적인 무료 모델 (권장)
+            'gemini-1.5-flash-8b',   # ✅ 경량화 모델
+            'gemini-1.5-pro',        # ✅ 고성능 모델(한도 낮음)
+            'gemini-2.0-flash-exp',  # ✅ 실험적 모델 (미리보기)
+            'gemini-2.0-flash',      # ❌ 아직 일반 공개 안됨
         ]
         for model_name in models:
             try:
                 if DEBUG:
                     print(f"🔍 모델 확인 중: {model_name}")
-                model = genai.GenerativeModel(model_name)
+                # 새 API에서는 모델 이름만 반환
                 print(f"✅ 사용할 모델: {model_name}")
-                return model
+                return model_name
             except Exception as e:
                 if DEBUG:
                     print(f"  ❌ {model_name} 불가: {str(e)[:50]}")
                 continue
         
-        # 모든 모델 실패 시
         print("❌ 사용 가능한 Gemini 모델을 찾을 수 없습니다.")
-        print("   https://ai.google.dev/pricing/info에서 사용 가능한 모델을 확인하세요.")
+        print("   https://ai.google.dev/gemini-api/docs/models/gemini 에서 사용 가능한 모델을 확인하세요.")
         return None
     except Exception as e:
         print(f"❌ 모델 확인 중 오류: {e}")
         return None
 
-model = get_available_model()
-if not model:
+model_name = get_available_model()
+if not model_name:
     print("❌ 프로그램을 종료합니다.")
     exit(1)
 
@@ -154,7 +153,6 @@ def send_email(subject, body):
         server.send_message(msg)
 
 def process_youtube_automation():
-    # 디버깅 모드: 첫 번째 채널만 처리
     feeds_to_process = RSS_FEEDS[:1] if DEBUG else RSS_FEEDS
     
     for feed_url in feeds_to_process:
@@ -182,12 +180,16 @@ def process_youtube_automation():
                             print(f"   ⚠ 자막 없음, 제목/설명으로 진행")
                             content_to_analyze = f"제목: {entry.title}\n설명: {entry.summary}"
                         
-                        # 2. Gemini 요약
+                        # 2. Gemini 요약 (새 API 사용)
                         print(f"   ⏳ Gemini 요약 생성 중...")
                         prompt = f"다음 유튜브 영상 내용을 3문장으로 핵심 요약해줘:\n\n{content_to_analyze}"
                         
                         try:
-                            response = model.generate_content(prompt)
+                            # 새 API 사용법
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=prompt
+                            )
                             summary = response.text
                             print(f"   ✅ 요약 생성 완료")
                             print(f"   📝 요약 내용:\n{summary}")
@@ -218,9 +220,15 @@ def process_youtube_automation():
                                 # 프로그램 종료
                                 raise Exception("API 한도 초과로 프로그램 종료")
                             else:
-                                # 다른 Gemini 에러
-                                print(f"   ❌ 요약 생성 실패: {error_msg[:100]}")
-                                raise
+                                print(f"   ❌ 요약 생성 실패: {error_msg}")
+                                
+                                if DEBUG:
+                                    print("=" * 60)
+                                    print("🛑 디버깅 모드: 에러 발생으로 중단")
+                                    print("=" * 60)
+                                    raise
+                                else:
+                                    raise
                         
                         # 3. 이메일 전송 (DEBUG 모드에서는 스킵)
                         if DEBUG:
@@ -255,7 +263,7 @@ def process_youtube_automation():
             print(f"⚠ 피드 처리 중 오류: {e}")
             continue
 
-# 1시간마다 반복 실행
+# 프로그램 실행 (DEBUG 모드: 첫 번째 영상만, 프로덕션: 모든 새 영상)
 if __name__ == "__main__":
     if DEBUG:
         print("=" * 60)
@@ -264,9 +272,9 @@ if __name__ == "__main__":
     
     try:
         if RSS_FEEDS:
-            print("🔄 첫 번째 자동화 작업 실행 중...")
+            print("🔄 자동화 작업 실행 중...")
             process_youtube_automation()
-            print("✅ 첫 번째 작업 완료\n")
+            print("✅ 작업 완료\n")
         else:
             print("❌ RSS 피드가 없어 프로그램을 종료합니다.")
     except Exception as e:
@@ -274,7 +282,7 @@ if __name__ == "__main__":
         
         # API 한도 초과 에러
         if "API 한도 초과" in error_msg:
-            pass  # 이미 위에서 상세 메시지 출력됨
+            pass
         else:
             print(f"❌ 오류 발생: {e}")
             import traceback

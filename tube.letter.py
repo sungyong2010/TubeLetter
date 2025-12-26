@@ -1,3 +1,8 @@
+"""
+python -m PyInstaller `
+    --onefile  `
+    --name="tube.letter" tube.letter.py
+"""
 import feedparser
 import time
 from google import genai  # 변경: google.generativeai → google.genai
@@ -9,12 +14,15 @@ import os
 from dotenv import load_dotenv
 import json
 import markdown  # pip install markdown
+from datetime import datetime, timedelta
+from dateutil import parser as date_parser  # pip install python-dateutil
 
 # .env 파일에서 환경 변수 로드
 load_dotenv()
 
 # --- 설정 구간 ---
 DEBUG = True  # 디버깅 플래그 (True: 디버깅 메시지 출력, False: 숨김)
+HOURS_TO_CHECK = 24  # 최근 몇 시간 이내의 영상만 처리 (24시간 = 1일)
 
 # 환경 변수에서 민감 정보 불러오기
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -225,34 +233,90 @@ def send_email(subject, body):
         print(f"   📧 이메일 발송: {EMAIL_SENDER} → {len(RECIPIENT_LIST)}명")
 
 def process_youtube_automation():
-    feeds_to_process = RSS_FEEDS[:1] if DEBUG else RSS_FEEDS
+    # 모든 피드 처리 (DEBUG 모드 상관없이)
+    feeds_to_process = RSS_FEEDS
+    
+    # 시간 기준 설정 (현재 시각 - HOURS_TO_CHECK)
+    time_threshold = datetime.now(datetime.now().astimezone().tzinfo) - timedelta(hours=HOURS_TO_CHECK)
+    
+    if DEBUG:
+        print(f"⏰ 시간 필터: {HOURS_TO_CHECK}시간 이내 ({time_threshold.strftime('%Y-%m-%d %H:%M:%S')} 이후)")
+    
+    total_processed = 0  # 처리된 영상 수
+    total_skipped_old = 0  # 오래된 영상 스킵 수
+    total_skipped_cached = 0  # 캐시된 영상 스킵 수
     
     for feed_url in feeds_to_process:
         try:
             feed = feedparser.parse(feed_url)
+            channel_name = feed.feed.title if hasattr(feed.feed, 'title') else 'Unknown'
+            
             if DEBUG:
-                print(f"📡 피드 처리 중: {feed_url[:50]}...")
-                print(f"   📊 총 {len(feed.entries)}개의 영상 발견")
+                print(f"\n{'='*60}")
+                print(f"📡 채널: {channel_name}")
+                print(f"   피드: {feed_url[:60]}...")
+                print(f"   총 {len(feed.entries)}개의 영상 발견")
+            
+            channel_processed = 0
             
             for entry in feed.entries:
                 try:
                     video_id = entry.yt_videoid
-                    if video_id not in processed_videos:
-                        print(f"\n🎥 새 영상 발견: {entry.title}")
-                        print(f"   📌 Video ID: {video_id}")
-                        print(f"   🔗 Link: {entry.link}")
-                        
-                        # 1. 자막 가져오기
-                        print(f"   ⏳ 자막 추출 중...")
-                        transcript = get_transcript(video_id)
-                        if transcript:
-                            print(f"   ✅ 자막 추출 성공 (길이: {len(transcript)})")
-                            content_to_analyze = transcript
+                    
+                    # 1. 캐시 확인 (이미 처리한 영상)
+                    if video_id in processed_videos:
+                        total_skipped_cached += 1
+                        if DEBUG:
+                            print(f"   ⏭ 스킵 (캐시됨): {entry.title[:50]}...")
+                        continue
+                    
+                    # 2. 게시 시간 확인 (최근 HOURS_TO_CHECK 시간 이내인지)
+                    try:
+                        # RSS 피드의 published 또는 updated 시간 파싱
+                        if hasattr(entry, 'published_parsed'):
+                            pub_time = datetime(*entry.published_parsed[:6])
+                        elif hasattr(entry, 'updated_parsed'):
+                            pub_time = datetime(*entry.updated_parsed[:6])
                         else:
-                            print(f"   ⚠ 자막 없음, 제목/설명으로 진행")
-                            content_to_analyze = f"제목: {entry.title}\n설명: {entry.summary}"
+                            # 시간 정보가 없으면 처리 (안전장치)
+                            pub_time = datetime.now()
                         
-                        # 2. Gemini 요약 (새 API 사용)
+                        # 타임존 추가 (naive datetime을 aware datetime으로 변환)
+                        if pub_time.tzinfo is None:
+                            pub_time = pub_time.replace(tzinfo=time_threshold.tzinfo)
+                        
+                        # 시간 비교
+                        if pub_time < time_threshold:
+                            total_skipped_old += 1
+                            if DEBUG:
+                                age_hours = (datetime.now(time_threshold.tzinfo) - pub_time).total_seconds() / 3600
+                                print(f"   ⏭ 스킵 (오래됨): {entry.title[:50]}... ({age_hours:.1f}시간 전)")
+                            continue
+                    
+                    except Exception as time_error:
+                        if DEBUG:
+                            print(f"   ⚠ 시간 파싱 실패, 영상 처리 계속: {time_error}")
+                    
+                    # 3. 새 영상 처리
+                    print(f"\n{'─'*60}")
+                    print(f"🎥 새 영상 발견: {entry.title}")
+                    print(f"   📺 채널: {channel_name}")
+                    print(f"   📌 Video ID: {video_id}")
+                    print(f"   🔗 Link: {entry.link}")
+                    if hasattr(entry, 'published'):
+                        print(f"   📅 게시: {entry.published}")
+                    
+                    # 4. 자막 가져오기
+                    print(f"   ⏳ 자막 추출 중...")
+                    transcript = get_transcript(video_id)
+                    if transcript:
+                        print(f"   ✅ 자막 추출 성공 (길이: {len(transcript)}자)")
+                        content_to_analyze = transcript
+                    else:
+                        print(f"   ⚠ 자막 없음, 제목/설명으로 진행")
+                        content_to_analyze = f"제목: {entry.title}\n설명: {entry.summary}"
+                        
+                        # 5. Gemini 요약 (새 API 사용)
                         print(f"   ⏳ Gemini 요약 생성 중...")
                         prompt = f"""다음 유튜브 영상의 내용을 상세하게 분석하고 요약해줘.
 
@@ -327,10 +391,12 @@ def process_youtube_automation():
                                 else:
                                     raise
                         
-                        # 3. 이메일 전송 (DEBUG 모드에서는 스킵)
-                        if not DEBUG:
-                            print(f"   ⏭ 이메일 전송 스킵 (디버깅 모드)")
-                        else:
+                        # 6. 이메일 전송 여부 확인
+                        print(f"\n{'─'*60}")
+                        send_choice = input("📧 이메일을 전송하시겠습니까? (y: 전송 / n: 스킵): ").strip().lower()
+                        print(f"{'─'*60}")
+
+                        if send_choice == 'y':
                             print(f"   ⏳ 이메일 전송 중...")
                             email_body = f"""
 ═══════════════════════════════════════════════════
@@ -355,17 +421,23 @@ def process_youtube_automation():
 """
                             send_email(f"[요약] {entry.title}", email_body)
                             print(f"   ✅ 이메일 전송 완료")
+                        else:
+                            print(f"   ⏭ 이메일 전송 스킵")
                         
                         processed_videos.add(video_id)
                         save_processed_videos(processed_videos)  # ✅ 즉시 저장
-                        print(f"✅ 처리 완료: {entry.title}\n")
+                        print(f"✅ 처리 완료: {entry.title[:50]}...\n")
                         
-                        # 디버깅 모드: 첫 번째 영상만 처리하고 중단
-                        if DEBUG:
-                            print("=" * 60)
-                            print("🛑 디버깅 모드: 첫 번째 영상만 처리")
-                            print("=" * 60)
+                        channel_processed += 1
+                        total_processed += 1
+                        
+                        # 사용자 확인 받기 (계속 진행 여부)
+                        print(f"{'─'*60}")
+                        user_input = input("⏸ 다음 영상을 처리하시겠습니까? (Enter: 계속 / q: 종료): ").strip().lower()
+                        if user_input == 'q':
+                            print(f"\n🛑 사용자 요청으로 프로그램 종료")
                             return
+                        print(f"{'─'*60}\n")
                         
                 except Exception as e:
                     error_msg = str(e)
@@ -378,11 +450,24 @@ def process_youtube_automation():
                     # 다른 에러는 계속 진행
                     print(f"⚠ 영상 처리 중 오류: {error_msg[:80]}")
                     continue
+            
+            if DEBUG:
+                print(f"📊 채널 '{channel_name}' 처리 완료: {channel_processed}개 영상 요약")
+                
         except Exception as e:
             print(f"⚠ 피드 처리 중 오류: {e}")
             continue
+    
+    # 최종 통계
+    print(f"\n{'='*60}")
+    print(f"📊 처리 완료 통계")
+    print(f"{'='*60}")
+    print(f"✅ 요약 생성: {total_processed}개")
+    print(f"⏭ 캐시 스킵: {total_skipped_cached}개")
+    print(f"⏭ 오래된 영상 스킵: {total_skipped_old}개")
+    print(f"{'='*60}")
 
-# 프로그램 실행 (DEBUG 모드: 첫 번째 영상만, 프로덕션: 모든 새 영상)
+# 프로그램 실행
 if __name__ == "__main__":
     if DEBUG:
         print("=" * 60)

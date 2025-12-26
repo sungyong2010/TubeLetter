@@ -4,12 +4,31 @@ import google.generativeai as genai
 from youtube_transcript_api import YouTubeTranscriptApi
 import smtplib
 from email.mime.text import MIMEText
+import os
+from dotenv import load_dotenv
+
+# .env 파일에서 환경 변수 로드
+load_dotenv()
 
 # --- 설정 구간 ---
 DEBUG = True  # 디버깅 플래그 (True: 디버깅 메시지 출력, False: 숨김)
-GEMINI_API_KEY = "AIzaSyBs5ZZgI13vG74THoAbW-MaWBg0Pd-B7Kw"
-EMAIL_ADDRESS = "sungyong2010@gmail.com"
-EMAIL_PASSWORD = "lbzx rzqb tszp geee"  # Gmail 앱 비밀번호
+
+# 환경 변수에서 민감 정보 불러오기
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+# 필수 환경 변수 검증
+if not all([GEMINI_API_KEY, EMAIL_ADDRESS, EMAIL_PASSWORD]):
+    print("❌ 오류: .env 파일에 다음 변수들이 설정되어야 합니다:")
+    if not GEMINI_API_KEY:
+        print("   - GEMINI_API_KEY")
+    if not EMAIL_ADDRESS:
+        print("   - EMAIL_ADDRESS")
+    if not EMAIL_PASSWORD:
+        print("   - EMAIL_PASSWORD")
+    print("\n💡 .env.example 파일을 참고하여 .env 파일을 생성하세요.")
+    exit(1)
 
 # Gemini API 무료 요금제 한도
 GEMINI_FREE_TIER_LIMITS = {
